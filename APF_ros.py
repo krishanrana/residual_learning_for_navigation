@@ -1,3 +1,6 @@
+#! /usr/bin/env python
+
+from __future__ import print_function, division
 import numpy as np
 import cv2
 import random
@@ -5,6 +8,7 @@ import time
 from matplotlib import pyplot as plt
 import scipy.ndimage
 from collections import deque
+
 
         
 # All angles in this method have to be in robot frame and not global frame
@@ -29,7 +33,6 @@ class PotentialFieldsController():
         return angle
 
     def attractiveField(self, angle_to_goal):
-
         mapTo360 = angle_to_goal + np.pi
         #print(np.rad2deg(angle_to_goal))
         #init map with range of FOV 0 - FOV
@@ -41,7 +44,6 @@ class PotentialFieldsController():
 
         #gradient is how sharp the attraction in the map is
         gradient = 1/(self.fov/2)
-
         #iterate through each angle in the fov map and compute linear relation to goal angle
         #ie compute ramp profile of map
 
@@ -54,13 +56,15 @@ class PotentialFieldsController():
             attraction_field[loc] = 1 - angle * gradient
 
 
+
+
         return attraction_field
 
 
     def repulsiveField(self, laser_scan):
-        hit = np.flip((laser_scan < 0.5))
+        hit = np.flip((laser_scan < 3))
         struct = scipy.ndimage.generate_binary_structure(1, 1)
-        hit = scipy.ndimage.binary_dilation(hit, structure=struct, iterations=20).astype(hit.dtype) #30
+        hit = scipy.ndimage.binary_dilation(hit, structure=struct, iterations=30).astype(hit.dtype) #30
         #hit = 1 - laser_scan*2
         repulsive_field = np.zeros([(self.fov+1)])
         repulsive_field[int(self.fov/4) : int(3*self.fov/4)] = hit # 180 deg version
@@ -71,7 +75,7 @@ class PotentialFieldsController():
 
     def computeResultant(self, angle_to_goal, laser_scan):
 
-        Kw = 2# 2
+        Kw = 3# 2
         Kv = 0.1 # 0.1
         att = self.attractiveField(angle_to_goal)
         rep = self.repulsiveField(laser_scan)
@@ -101,15 +105,12 @@ class PotentialFieldsController():
         omega = np.clip(omega, -1, 1)
         vel = np.clip(vel, -1, 1)
 
-        # vel = 0
-        # self.ax1.cla(), self.ax1.plot(fov_map, att), self.ax1.set_title('Attractor')
-        # self.ax2.cla(), self.ax2.plot(fov_map, rep), self.ax2.set_title('Repulsor')
-        # self.ax3.cla(), self.ax3.plot(fov_map, result), self.ax3.set_title('Resultant')
+        #vel = 0
+        self.ax1.cla(), self.ax1.plot(fov_map, att), self.ax1.set_title('Attractor')
+        self.ax2.cla(), self.ax2.plot(fov_map, rep), self.ax2.set_title('Repulsor')
+        self.ax3.cla(), self.ax3.plot(fov_map, result), self.ax3.set_title('Resultant')
 
-        # plt.show(block=False)
-        # plt.pause(0.00000001)
-
-        #print([vel, omega])
+        # print([vel, omega])
 
         return np.array([vel, omega])
 
