@@ -106,9 +106,9 @@ class PotentialFieldsController():
         vel = np.clip(vel, -1, 1)
 
         #vel = 0
-        self.ax1.cla(), self.ax1.plot(fov_map, att), self.ax1.set_title('Attractor')
-        self.ax2.cla(), self.ax2.plot(fov_map, rep), self.ax2.set_title('Repulsor')
-        self.ax3.cla(), self.ax3.plot(fov_map, result), self.ax3.set_title('Resultant')
+        # self.ax1.cla(), self.ax1.plot(fov_map, att), self.ax1.set_title('Attractor')
+        # self.ax2.cla(), self.ax2.plot(fov_map, rep), self.ax2.set_title('Repulsor')
+        # self.ax3.cla(), self.ax3.plot(fov_map, result), self.ax3.set_title('Resultant')
 
         # print([vel, omega])
 

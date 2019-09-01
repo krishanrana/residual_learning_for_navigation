@@ -95,10 +95,10 @@ if __name__ == "__main__":
     rospy.init_node('env_ros', anonymous=True)
 
     oar = ObstacleAvoiderROS()
-    #rospy.spin()
+    rospy.spin()
 
-    while not rospy.is_shutdown():
-        plt.show(block=False)
-        plt.pause(0.001)
+    # while not rospy.is_shutdown():
+    #     plt.show(block=False)
+    #     plt.pause(0.001)
 
 
