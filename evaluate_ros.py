@@ -55,7 +55,7 @@ class ObstacleAvoiderROS(object):
             #print(np.rad2deg(angle_to_goal))
             dist_to_goal  = np.linalg.norm(to_goal)
             print('Distance to Goal: ', dist_to_goal)
-
+            # Remove the last element of laser scan array to clip it to 180 samples
             laser_scan = np.array(data.ranges[:-1])
             action = self.prior.computeResultant(angle_to_goal, laser_scan)
             linear_vel = action[0] * 1
