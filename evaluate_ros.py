@@ -15,7 +15,7 @@ from tf.transformations import euler_from_quaternion, quaternion_from_euler
 
 import tf2_ros
 
-MAP_FRAME='odom'
+MAP_FRAME='map'
 
 class ObstacleAvoiderROS(object):
 
@@ -31,52 +31,51 @@ class ObstacleAvoiderROS(object):
         # The listener recieves tf2 tranformations over the wire and buffers them up for 10 seconds
         self._tf_buffer = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer)
-        self.goal_loc = np.array([-5,10])
+        self.goal_loc = np.array([-5.667,0.593])
 
 
     def cb_laser(self, data):
         # Get robot's position through TF @ same timestamp as laser message
         try:
-            t = self._tf_buffer.lookup_transform(MAP_FRAME, 'base_link', data.header.stamp)
+            t = self._tf_buffer.lookup_transform(MAP_FRAME, 'base_link', data.header.stamp, rospy.Duration(1.0))
+        except Exception as e:
+            rospy.logerr(e)
+            return 
 
-            # Convert the quaternion to euler angles
-            q = (t.transform.rotation.x, t.transform.rotation.y, t.transform.rotation.z, t.transform.rotation.w)
-            euler = euler_from_quaternion(q)
-            robot_yaw = euler[2]
-            # Figure out the relative angle of the goal from the robot's POSE 
-            
-            robot_loc = np.array([t.transform.translation.x, t.transform.translation.y])
-            robot_angle = np.arctan2(np.sin(robot_yaw), np.cos(robot_yaw))
-            #print(np.rad2deg(robot_angle))
-            to_goal = self.goal_loc - robot_loc
-            #print(np.rad2deg(np.arctan2(to_goal[1], to_goal[0])))
-            angle_to_goal = robot_angle - np.arctan2(to_goal[1], to_goal[0])
-            angle_to_goal = np.arctan2(np.sin(angle_to_goal), np.cos(angle_to_goal))
-            #print(np.rad2deg(angle_to_goal))
-            dist_to_goal  = np.linalg.norm(to_goal)
-            print('Distance to Goal: ', dist_to_goal)
-            # Remove the last element of laser scan array to clip it to 180 samples
-            laser_scan = np.array(data.ranges[:-1])
-            action = self.prior.computeResultant(angle_to_goal, laser_scan)
-            linear_vel = action[0] * 1
-            angular_vel = action[1] * 1
-            twist_msg = Twist(linear=Vector3(linear_vel, 0, 0), angular=Vector3(0,0,angular_vel))
-            self.pub_vel.publish(twist_msg)
-            print('Linear Vel: ', linear_vel)
-            print('Angular Vel: ', angular_vel)
-            rospy.sleep(0.01666667)
-            twist_msg = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0,0,0))
-            self.pub_vel.publish(twist_msg)
-            #print(twist_msg)
+        # Convert the quaternion to euler angles
+        q = (t.transform.rotation.x, t.transform.rotation.y, t.transform.rotation.z, t.transform.rotation.w)
+        euler = euler_from_quaternion(q)
+        robot_yaw = euler[2]
+        # Figure out the relative angle of the goal from the robot's POSE 
+        
+        robot_loc = np.array([t.transform.translation.x, t.transform.translation.y])
+        robot_angle = np.arctan2(np.sin(robot_yaw), np.cos(robot_yaw))
+        #print(np.rad2deg(robot_angle))
+        to_goal = self.goal_loc - robot_loc
+        #print(np.rad2deg(np.arctan2(to_goal[1], to_goal[0])))
+        angle_to_goal = robot_angle - np.arctan2(to_goal[1], to_goal[0])
+        angle_to_goal = np.arctan2(np.sin(angle_to_goal), np.cos(angle_to_goal))
+        #print(np.rad2deg(angle_to_goal))
+        dist_to_goal  = np.linalg.norm(to_goal)
+        print('Distance to Goal: ', dist_to_goal)
+        # Remove the last element of laser scan array to clip it to 180 samples
+        laser_scan = np.array(data.ranges[:180])
+        laser_scan[laser_scan < 0.23] = 15
+        action = self.prior.computeResultant(angle_to_goal, laser_scan)
+        linear_vel = action[0] * 0.25
+        angular_vel = action[1] * 0.25
+        twist_msg = Twist(linear=Vector3(linear_vel, 0, 0), angular=Vector3(0,0,angular_vel))
+        self.pub_vel.publish(twist_msg)
+        print('Linear Vel: ', linear_vel)
+        print('Angular Vel: ', angular_vel)
+        # rospy.sleep(0.01666667)
+        # twist_msg = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0,0,0))
+        # self.pub_vel.publish(twist_msg)
+        #print(twist_msg)
 
 
 
         
-        except Exception:
-            rospy.logerr("Lookup of TF failed!")
-            return 
-
-
 
         # Figure out the desired action
         
@@ -92,13 +91,13 @@ class ObstacleAvoiderROS(object):
 
 
 if __name__ == "__main__":
-    rospy.init_node('env_ros', anonymous=True)
+    rospy.init_node('env_ros')
 
     oar = ObstacleAvoiderROS()
-    rospy.spin()
+    # rospy.spin()
 
-    # while not rospy.is_shutdown():
-    #     plt.show(block=False)
-    #     plt.pause(0.001)
+    while not rospy.is_shutdown():
+        plt.show(block=False)
+        plt.pause(0.001)
 
 
