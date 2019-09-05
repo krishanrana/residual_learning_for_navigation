@@ -11,10 +11,23 @@ from std_msgs.msg import String, Int32, Int32MultiArray, MultiArrayLayout, Multi
 from geometry_msgs.msg import Twist, Vector3
 from sensor_msgs.msg import LaserScan
 from tf.transformations import euler_from_quaternion, quaternion_from_euler
-
+import torch, torch.nn as nn
 import tf2_ros
 
 MAP_FRAME = 'map'
+PATH = os.path.dirname(os.path.realpath(__file__))
+model_name = "1567642880.05_PointGoalNavigation_residual_EnvType_4_sparse_Dropout_vhf_ROBOT_FINAL"
+
+
+class ActorNetwork(nn.Module):
+    def __init__(self, obs_size, act_size):
+        super(ActorNetwork, self).__init__()
+        self.a1 = nn.Sequential(nn.Linear(obs_size, 400), nn.ReLU(), nn.Dropout(p=0.2), 
+                                nn.Linear(400, 300), nn.ReLU(), nn.Dropout(p=0.2), 
+                                nn.Linear(300, act_size), nn.Tanh())
+
+    def forward(self, obs):
+        return self.a1(obs)
 
 
 class ObstacleAvoiderROS(object):
@@ -33,17 +46,20 @@ class ObstacleAvoiderROS(object):
         self._tf_buffer = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer)
         self.goal_loc = np.array([-5.667, 0.593])
+        self.actor = ActorNetwork(16, 2)
+        self.actions_prev = [0, 0]
 
-    def cb_laser(self, data):
-        # Get robot's position through TF @ same timestamp as laser message
-        try:
-            t = self._tf_buffer.lookup_transform(MAP_FRAME, 'base_link',
-                                                 data.header.stamp,
-                                                 rospy.Duration(1.0))
-        except Exception as e:
-            rospy.logerr(e)
-            return
+    def load_weights(self):
+        self.actor.load_state_dict(torch.load(PATH + '/residual_policy_weights/' +  model_name + 'pi.pth'))
+        return
 
+    def extract_network_uncertainty(self, state):
+        action = self.actor(state.repeat(100,1))
+        mean = torch.mean(action, dim=0)
+        var = torch.var(action, dim=0)
+        return mean, var
+
+    def process_data(self, t, data):
         # Convert the quaternion to euler angles
         q = (t.transform.rotation.x, t.transform.rotation.y,
              t.transform.rotation.z, t.transform.rotation.w)
@@ -65,40 +81,77 @@ class ObstacleAvoiderROS(object):
         print('Distance to Goal: ', dist_to_goal)
         # Remove the last element of laser scan array to clip it to 180 samples
         laser_scan = np.array(data.ranges[:180])
-        #print(laser_scan[np.where(laser_scan < 1)])
-        #print('Laser Scan: ', laser_scan)
-        laser_scan[laser_scan < 0.25] = 15
-        action = self.prior.computeResultant(angle_to_goal, laser_scan)
-        linear_vel = action[0] * 0.25
-        angular_vel = action[1] * 0.25
-        twist_msg = Twist(
+        # Deal with the spurious data 
+        laser_scan[laser_scan < 0.25] = 1.5
+        # Clip laser scan data to 1.5 meters
+        laser_scan[laser_scan > 1.5] = 1.5
+
+        return laser_scan, angle_to_goal, dist_to_goal
+
+    def process_observation(self, angle_to_goal, dist_to_goal, laser_scan, prior_action):
+        num_bins = 15
+        np.concatenate([prior_action, nobs])
+        laser_scan_binned = np.zeros(num_bins)
+        div_factor = int(180/num_bins)
+        laser_scan[laser_scan < 0.25] = np.nan
+        for i in range(num_bins):
+            laser_scan_binned[i] = np.nanmean(laser_scan[i*div_factor:(i*div_factor+div_factor)])
+
+        obs = np.concatenate([prior_action,
+                              laser_scan_binned,
+                              self.actions_prev,
+                              [dist_to_goal],
+                              [angle_to_goal]])
+
+        return obs
+
+
+    def cb_laser(self, data):
+        # Get robot's position through TF @ same timestamp as laser message
+        try:
+            t = self._tf_buffer.lookup_transform(MAP_FRAME, 'base_link',
+                                                 data.header.stamp,
+                                                 rospy.Duration(1.0))
+        except Exception as e:
+            rospy.logerr(e)
+            return
+
+        eps = np.random.random()
+        laser_scan, angle_to_goal, dist_to_goal = self.process_data(t, data)
+        prior_action = self.prior.computeResultant(angle_to_goal, laser_scan)
+        obs = self.process_observation(angle_to_goal, dist_to_goal, laser_scan, prior_action)
+        policy_action, var = self.extract_network_uncertainty(torch.as_tensor(obs).float()).detach().numpy()            
+        hybrid_action = (policy_action + prior_action).clip(-1, 1)
+
+        if eps > var[0] or eps > var[1]:
+            linear_vel = hybrid_action[0] * 0.25
+            angular_vel = hybrid_action[1] * 0.25
+            twist_msg = Twist(
             linear=Vector3(linear_vel, 0, 0),
             angular=Vector3(0, 0, angular_vel))
-        self.pub_vel.publish(twist_msg)
+            self.pub_vel.publish(twist_msg)
+            print('Residual')
+        else:
+            linear_vel = prior_action[0] * 0.25
+            angular_vel = prior_action[1] * 0.25
+            twist_msg = Twist(
+            linear=Vector3(linear_vel, 0, 0),
+            angular=Vector3(0, 0, angular_vel))
+            self.pub_vel.publish(twist_msg)
+            print('Prior')
+
+        self.actions_prev = np.array([linear_vel, angular_vel])
+
         print('Linear Vel: ', linear_vel)
         print('Angular Vel: ', angular_vel)
-        # rospy.sleep(0.01666667)
-        # twist_msg = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0,0,0))
-        # self.pub_vel.publish(twist_msg)
-        #print(twist_msg)
-
-        # Figure out the desired action
-
-        # From the action, form & publish a velocity to /cmd_vel
-        # TODO
-        # twist_msg = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0,0,0))
-        # self._pub_vel.publish(twist_msg)
-
-        # state_info = data.data
-        # from this data compute the angle to goal and process the laser scan data for inputs to the prior
 
 
 if __name__ == "__main__":
     rospy.init_node('env_ros')
-
     oar = ObstacleAvoiderROS()
-    # rospy.spin()
+    oar.load_weights()
+    rospy.spin()
 
-    while not rospy.is_shutdown():
-        plt.show(block=False)
-        plt.pause(0.001)
+    # while not rospy.is_shutdown():
+    #     plt.show(block=False)
+    #     plt.pause(0.001)

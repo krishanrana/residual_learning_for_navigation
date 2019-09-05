@@ -58,7 +58,7 @@ class PotentialFieldsController():
         return attraction_field
 
     def repulsiveField(self, laser_scan):
-        hit = np.flip((laser_scan < 1))
+        hit = np.flip((laser_scan < 1.5))
         struct = scipy.ndimage.generate_binary_structure(1, 1)
         hit = scipy.ndimage.binary_dilation(
             hit, structure=struct, iterations=30).astype(hit.dtype)  #30
@@ -104,12 +104,12 @@ class PotentialFieldsController():
         vel = np.clip(vel, -1, 1)
 
         #vel = 0
-        self.ax1.cla(), self.ax1.plot(fov_map,
-                                      att), self.ax1.set_title('Attractor')
-        self.ax2.cla(), self.ax2.plot(fov_map,
-                                      rep), self.ax2.set_title('Repulsor')
-        self.ax3.cla(), self.ax3.plot(fov_map,
-                                      result), self.ax3.set_title('Resultant')
+        # self.ax1.cla(), self.ax1.plot(fov_map,
+        #                               att), self.ax1.set_title('Attractor')
+        # self.ax2.cla(), self.ax2.plot(fov_map,
+        #                               rep), self.ax2.set_title('Repulsor')
+        # self.ax3.cla(), self.ax3.plot(fov_map,
+        #                               result), self.ax3.set_title('Resultant')
 
         # print([vel, omega])
 
