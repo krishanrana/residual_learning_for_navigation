@@ -55,7 +55,7 @@ class ObstacleAvoiderROS(object):
         self.goal_loc = np.array([-5.230626, -0.7525351])
         self.actor = ActorNetwork(21, 2)
         self.actions_prev = [0, 0]
-        self.method = "prior"
+        self.method = "residual"
 
     def load_weights(self):
         self.actor.load_state_dict(
