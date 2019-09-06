@@ -19,10 +19,10 @@ PATH = os.path.dirname(os.path.realpath(__file__))
 model_name = "1567642880.05_PointGoalNavigation_residual_EnvType_4_sparse_Dropout_vhf_ROBOT_FINAL"
 
 
-class ActorNetwork(nn.Module):
+class ActorNetwork_residual(nn.Module):
 
     def __init__(self, obs_size, act_size):
-        super(ActorNetwork, self).__init__()
+        super(ActorNetwork_residual, self).__init__()
         self.a1 = nn.Sequential(
             nn.Linear(obs_size, 400),
             nn.ReLU(),
@@ -30,6 +30,21 @@ class ActorNetwork(nn.Module):
             nn.Linear(400, 300),
             nn.ReLU(),
             nn.Dropout(p=0.2),
+            nn.Linear(300, act_size),
+            nn.Tanh())
+
+    def forward(self, obs):
+        return self.a1(obs)
+
+class ActorNetwork_policy(nn.Module):
+
+    def __init__(self, obs_size, act_size):
+        super(ActorNetwork_policy, self).__init__()
+        self.a1 = nn.Sequential(
+            nn.Linear(obs_size, 400),
+            nn.ReLU(),
+            nn.Linear(400, 300),
+            nn.ReLU(),
             nn.Linear(300, act_size),
             nn.Tanh())
 
@@ -53,14 +68,20 @@ class ObstacleAvoiderROS(object):
         self._tf_buffer = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer)
         self.goal_loc = np.array([-5.230626, -0.7525351])
-        self.actor = ActorNetwork(21, 2)
-        self.actions_prev = [0, 0]
         self.method = "residual"
+        if self.method == "residual":
+            self.actor = ActorNetwork_residual(21, 2)
+        else:
+            self.actor = ActorNetwork_policy(21,2)
+        self.actions_prev = [0, 0]
+
 
     def load_weights(self):
-        self.actor.load_state_dict(
-            torch.load(PATH + '/residual_policy_weights/' + model_name +
-                       'pi.pth'))
+        if self.method == "residual":
+            self.actor.load_state_dict(torch.load(PATH + '/residual_policy_weights/' + model_name + 'pi.pth'))
+        else:
+            model_name = "1567656455.73_PointGoalNavigation_policy_EnvType_4_dense_Dropout_vhf_ROBOT_FINAL"
+            self.actor.load_state_dict(torch.load(PATH + '/policy_only_weights/' + model_name + 'pi.pth'))
         return
 
     def extract_network_uncertainty(self, state):
@@ -154,6 +175,14 @@ class ObstacleAvoiderROS(object):
         elif self.method == "prior":
             linear_vel = prior_action[0] * 0.25
             angular_vel = prior_action[1] * 0.25
+            twist_msg = Twist(
+                linear=Vector3(linear_vel, 0, 0),
+                angular=Vector3(0, 0, angular_vel))
+            self.pub_vel.publish(twist_msg)
+        elif self.method == "policy":
+            policy_action = policy_action.clip(-1, 1)
+            linear_vel = policy_action[0] * 0.25
+            angular_vel = policy_action[1] * 0.25
             twist_msg = Twist(
                 linear=Vector3(linear_vel, 0, 0),
                 angular=Vector3(0, 0, angular_vel))
