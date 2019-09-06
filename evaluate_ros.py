@@ -20,11 +20,18 @@ model_name = "1567642880.05_PointGoalNavigation_residual_EnvType_4_sparse_Dropou
 
 
 class ActorNetwork(nn.Module):
+
     def __init__(self, obs_size, act_size):
         super(ActorNetwork, self).__init__()
-        self.a1 = nn.Sequential(nn.Linear(obs_size, 400), nn.ReLU(), nn.Dropout(p=0.2), 
-                                nn.Linear(400, 300), nn.ReLU(), nn.Dropout(p=0.2), 
-                                nn.Linear(300, act_size), nn.Tanh())
+        self.a1 = nn.Sequential(
+            nn.Linear(obs_size, 400),
+            nn.ReLU(),
+            nn.Dropout(p=0.2),
+            nn.Linear(400, 300),
+            nn.ReLU(),
+            nn.Dropout(p=0.2),
+            nn.Linear(300, act_size),
+            nn.Tanh())
 
     def forward(self, obs):
         return self.a1(obs)
@@ -45,18 +52,21 @@ class ObstacleAvoiderROS(object):
         # The listener recieves tf2 tranformations over the wire and buffers them up for 10 seconds
         self._tf_buffer = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer)
-        self.goal_loc = np.array([-5.667, 0.593])
-        self.actor = ActorNetwork(16, 2)
+        self.goal_loc = np.array([-5.230626, -0.7525351])
+        self.actor = ActorNetwork(21, 2)
         self.actions_prev = [0, 0]
+        self.method = "prior"
 
     def load_weights(self):
-        self.actor.load_state_dict(torch.load(PATH + '/residual_policy_weights/' +  model_name + 'pi.pth'))
+        self.actor.load_state_dict(
+            torch.load(PATH + '/residual_policy_weights/' + model_name +
+                       'pi.pth'))
         return
 
     def extract_network_uncertainty(self, state):
-        action = self.actor(state.repeat(100,1))
-        mean = torch.mean(action, dim=0)
-        var = torch.var(action, dim=0)
+        action = self.actor(state.repeat(100, 1))
+        mean = torch.mean(action, dim=0).detach().numpy()
+        var = torch.var(action, dim=0).detach().numpy()
         return mean, var
 
     def process_data(self, t, data):
@@ -81,30 +91,29 @@ class ObstacleAvoiderROS(object):
         print('Distance to Goal: ', dist_to_goal)
         # Remove the last element of laser scan array to clip it to 180 samples
         laser_scan = np.array(data.ranges[:180])
-        # Deal with the spurious data 
+        # Deal with the spurious data
         laser_scan[laser_scan < 0.25] = 1.5
         # Clip laser scan data to 1.5 meters
         laser_scan[laser_scan > 1.5] = 1.5
 
         return laser_scan, angle_to_goal, dist_to_goal
 
-    def process_observation(self, angle_to_goal, dist_to_goal, laser_scan, prior_action):
+    def process_observation(self, angle_to_goal, dist_to_goal, laser_scan,
+                            prior_action):
         num_bins = 15
-        np.concatenate([prior_action, nobs])
         laser_scan_binned = np.zeros(num_bins)
-        div_factor = int(180/num_bins)
+        div_factor = int(180 / num_bins)
         laser_scan[laser_scan < 0.25] = np.nan
         for i in range(num_bins):
-            laser_scan_binned[i] = np.nanmean(laser_scan[i*div_factor:(i*div_factor+div_factor)])
+            laser_scan_binned[i] = np.nanmean(
+                laser_scan[i * div_factor:(i * div_factor + div_factor)])
 
-        obs = np.concatenate([prior_action,
-                              laser_scan_binned,
-                              self.actions_prev,
-                              [dist_to_goal],
-                              [angle_to_goal]])
+        obs = np.concatenate([
+            prior_action, laser_scan_binned, self.actions_prev, [dist_to_goal],
+            [angle_to_goal]
+        ])
 
         return obs
-
 
     def cb_laser(self, data):
         # Get robot's position through TF @ same timestamp as laser message
@@ -119,26 +128,36 @@ class ObstacleAvoiderROS(object):
         eps = np.random.random()
         laser_scan, angle_to_goal, dist_to_goal = self.process_data(t, data)
         prior_action = self.prior.computeResultant(angle_to_goal, laser_scan)
-        obs = self.process_observation(angle_to_goal, dist_to_goal, laser_scan, prior_action)
-        policy_action, var = self.extract_network_uncertainty(torch.as_tensor(obs).float()).detach().numpy()            
+        obs = self.process_observation(angle_to_goal, dist_to_goal, laser_scan,
+                                       prior_action)
+        policy_action, var = self.extract_network_uncertainty(
+            torch.as_tensor(obs).float())
         hybrid_action = (policy_action + prior_action).clip(-1, 1)
 
-        if eps > var[0] or eps > var[1]:
-            linear_vel = hybrid_action[0] * 0.25
-            angular_vel = hybrid_action[1] * 0.25
-            twist_msg = Twist(
-            linear=Vector3(linear_vel, 0, 0),
-            angular=Vector3(0, 0, angular_vel))
-            self.pub_vel.publish(twist_msg)
-            print('Residual')
-        else:
+        if self.method == "residual":
+            if eps > var[0] or eps > var[1]:
+                linear_vel = hybrid_action[0] * 0.25
+                angular_vel = hybrid_action[1] * 0.25
+                twist_msg = Twist(
+                    linear=Vector3(linear_vel, 0, 0),
+                    angular=Vector3(0, 0, angular_vel))
+                self.pub_vel.publish(twist_msg)
+                print('Residual')
+            else:
+                linear_vel = prior_action[0] * 0.25
+                angular_vel = prior_action[1] * 0.25
+                twist_msg = Twist(
+                    linear=Vector3(linear_vel, 0, 0),
+                    angular=Vector3(0, 0, angular_vel))
+                self.pub_vel.publish(twist_msg)
+                print('Prior')
+        elif self.method == "prior":
             linear_vel = prior_action[0] * 0.25
             angular_vel = prior_action[1] * 0.25
             twist_msg = Twist(
-            linear=Vector3(linear_vel, 0, 0),
-            angular=Vector3(0, 0, angular_vel))
+                linear=Vector3(linear_vel, 0, 0),
+                angular=Vector3(0, 0, angular_vel))
             self.pub_vel.publish(twist_msg)
-            print('Prior')
 
         self.actions_prev = np.array([linear_vel, angular_vel])
 

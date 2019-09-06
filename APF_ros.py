@@ -88,13 +88,10 @@ class PotentialFieldsController():
         fov_map = np.arange(-self.fov / 2, self.fov / 2 + 1)
 
         # Compute a repulsive angular velocity to ensure robot steers away from obstacle
-        rep_angle = self.fov / 2 - np.where(
-            laser_scan == np.min(laser_scan))[0][0]
         omega = -heading * Kw
         vel = (10 * Kv) * (1.0 - min(0.8 * abs(omega), 0.95))
 
-        if np.min(laser_scan) < 0.4 and (
-                50 < np.where(laser_scan == np.min(laser_scan))[0][0] < 220):
+        if np.min(laser_scan) < 0.4:
             vel_rep = -1 / np.min(laser_scan) * 0.01
             vel = vel + vel_rep
         else:
