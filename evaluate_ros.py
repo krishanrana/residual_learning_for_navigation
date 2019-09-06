@@ -79,7 +79,8 @@ class ObstacleAvoiderROS(object):
                 torch.load(PATH + '/residual_policy_weights/' + model_name +
                            'pi.pth'))
         else:
-            model_name = "1567656455.73_PointGoalNavigation_policy_EnvType_4_dense_Dropout_vhf_ROBOT_FINAL"
+            #model_name = "1567656455.73_PointGoalNavigation_policy_EnvType_4_dense_Dropout_vhf_ROBOT_FINAL"
+            model_name = "1567741358.18_PointGoalNavigation_policy_EnvType_5_sparse_Dropout_vhf_ROBOT_FINAL"
             self.actor.load_state_dict(
                 torch.load(PATH + '/policy_only_weights/' + model_name +
                            'pi.pth'))
