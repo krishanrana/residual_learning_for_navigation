@@ -16,7 +16,6 @@ import tf2_ros
 
 MAP_FRAME = 'map'
 PATH = os.path.dirname(os.path.realpath(__file__))
-model_name = "1567642880.05_PointGoalNavigation_residual_EnvType_4_sparse_Dropout_vhf_ROBOT_FINAL"
 
 
 class ActorNetwork_residual(nn.Module):
@@ -36,17 +35,14 @@ class ActorNetwork_residual(nn.Module):
     def forward(self, obs):
         return self.a1(obs)
 
+
 class ActorNetwork_policy(nn.Module):
 
     def __init__(self, obs_size, act_size):
         super(ActorNetwork_policy, self).__init__()
         self.a1 = nn.Sequential(
-            nn.Linear(obs_size, 400),
-            nn.ReLU(),
-            nn.Linear(400, 300),
-            nn.ReLU(),
-            nn.Linear(300, act_size),
-            nn.Tanh())
+            nn.Linear(obs_size, 400), nn.ReLU(), nn.Linear(400, 300),
+            nn.ReLU(), nn.Linear(300, act_size), nn.Tanh())
 
     def forward(self, obs):
         return self.a1(obs)
@@ -72,16 +68,21 @@ class ObstacleAvoiderROS(object):
         if self.method == "residual":
             self.actor = ActorNetwork_residual(21, 2)
         else:
-            self.actor = ActorNetwork_policy(21,2)
+            self.actor = ActorNetwork_policy(19, 2)
         self.actions_prev = [0, 0]
-
 
     def load_weights(self):
         if self.method == "residual":
-            self.actor.load_state_dict(torch.load(PATH + '/residual_policy_weights/' + model_name + 'pi.pth'))
+
+            model_name = "1567642880.05_PointGoalNavigation_residual_EnvType_4_sparse_Dropout_vhf_ROBOT_FINAL"
+            self.actor.load_state_dict(
+                torch.load(PATH + '/residual_policy_weights/' + model_name +
+                           'pi.pth'))
         else:
             model_name = "1567656455.73_PointGoalNavigation_policy_EnvType_4_dense_Dropout_vhf_ROBOT_FINAL"
-            self.actor.load_state_dict(torch.load(PATH + '/policy_only_weights/' + model_name + 'pi.pth'))
+            self.actor.load_state_dict(
+                torch.load(PATH + '/policy_only_weights/' + model_name +
+                           'pi.pth'))
         return
 
     def extract_network_uncertainty(self, state):
@@ -128,11 +129,16 @@ class ObstacleAvoiderROS(object):
         for i in range(num_bins):
             laser_scan_binned[i] = np.nanmean(
                 laser_scan[i * div_factor:(i * div_factor + div_factor)])
-
-        obs = np.concatenate([
-            prior_action, laser_scan_binned, self.actions_prev, [dist_to_goal],
-            [angle_to_goal]
-        ])
+        if self.method == "residual":
+            obs = np.concatenate([
+                prior_action, laser_scan_binned, self.actions_prev,
+                [dist_to_goal], [angle_to_goal]
+            ])
+        else:
+            obs = np.concatenate([
+                laser_scan_binned, self.actions_prev, [dist_to_goal],
+                [angle_to_goal]
+            ])
 
         return obs
 
