@@ -6,9 +6,9 @@ import os
 import copy
 from APF_ros import *
 import rospy
-from std_msgs.msg import String
-from std_msgs.msg import String, Int32, Int32MultiArray, MultiArrayLayout, MultiArrayDimension
+from std_msgs.msg import Bool, String, Int32, Int32MultiArray, MultiArrayLayout, MultiArrayDimension
 from geometry_msgs.msg import Twist, Vector3
+from nav_msgs.msg import Path
 from sensor_msgs.msg import LaserScan
 from tf.transformations import euler_from_quaternion, quaternion_from_euler
 import torch, torch.nn as nn
@@ -16,6 +16,13 @@ import tf2_ros
 
 MAP_FRAME = 'map'
 PATH = os.path.dirname(os.path.realpath(__file__))
+
+GOAL_COMPLETE_THRESHOLD = 0.2
+SUB_GOAL_FREQUENCY = 5
+
+
+def _dist(p1, p2):
+    return ((p2[0] - p1[0])**2 + (p2[1] - p2[1])**2)**0.5
 
 
 class ActorNetwork_residual(nn.Module):
@@ -63,13 +70,26 @@ class ObstacleAvoiderROS(object):
         # The listener recieves tf2 tranformations over the wire and buffers them up for 10 seconds
         self._tf_buffer = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer)
-        self.goal_loc = np.array([-5.230626, -0.7525351])
+
+        # self.goal_loc = np.array([-5.230626, -0.7525351])
+        self.goal_loc = None
+        self.goal_list = None
+        self.sub_global_plan = rospy.Subscriber(
+            '/move_base/GlobalPlanner/plan',
+            Path,
+            self.cb_global_plan,
+            queue_size=1)
+
+        self.pub_mode = rospy.Publisher('/using_residual', Bool, queue_size=1)
         self.method = "residual"
         if self.method == "residual":
             self.actor = ActorNetwork_residual(21, 2)
         else:
             self.actor = ActorNetwork_policy(19, 2)
         self.actions_prev = [0, 0]
+
+    def get_next_goal(self):
+        self.goal_loc = (self.goal_list.pop(0) if self.goal_list else None)
 
     def load_weights(self):
         if self.method == "residual":
@@ -143,7 +163,35 @@ class ObstacleAvoiderROS(object):
 
         return obs
 
+    def cb_global_plan(self, data):
+        # TODO some processing logic to get list of goals
+        print("NEW GLOBAL PLAN RECEIVED")
+        raw_goal_list = [
+            [p.pose.position.x, p.pose.position.y] for p in data.poses
+        ]
+        print("PLAN STARTS AT: %s, & FINISHES AT: %s" % (raw_goal_list[0],
+                                                         raw_goal_list[-1]))
+        self.goal_list = []
+        for g in raw_goal_list:
+            if (not self.goal_list or
+                    _dist(g, self.goal_list[-1]) > SUB_GOAL_FREQUENCY):
+                self.goal_list.append(g)
+        if self.goal_list[-1] != raw_goal_list[-1]:
+            self.goal_list.append(raw_goal_list[-1])
+
+        print("GOT THE FOLLOWING SUB_GOALS:")
+        for g in self.goal_list:
+            print("\t%s" % g)
+
+        # Take the first goal from the goal list & make it our current goal
+        self.get_next_goal()
+
     def cb_laser(self, data):
+        # Bail if we don't have a current goal
+        if self.goal_loc is None:
+            print("No goal, exiting early")
+            return
+
         # Get robot's position through TF @ same timestamp as laser message
         try:
             t = self._tf_buffer.lookup_transform(MAP_FRAME, 'base_link',
@@ -153,6 +201,7 @@ class ObstacleAvoiderROS(object):
             rospy.logerr(e)
             return
 
+        # Compute what our actions should be
         eps = np.random.random()
         laser_scan, angle_to_goal, dist_to_goal = self.process_data(t, data)
         prior_action = self.prior.computeResultant(angle_to_goal, laser_scan)
@@ -162,6 +211,14 @@ class ObstacleAvoiderROS(object):
             torch.as_tensor(obs).float())
         hybrid_action = (policy_action + prior_action).clip(-1, 1)
 
+        # Decide whether we should bail on performing any actions
+        if dist_to_goal < GOAL_COMPLETE_THRESHOLD:
+            self.get_next_goal()
+        if self.goal_loc is None:
+            print("No goal, exiting early")
+            return
+
+        # Send actions to the robot
         if self.method == "residual":
             if eps > var[0] or eps > var[1]:
                 linear_vel = hybrid_action[0] * 0.25
@@ -170,6 +227,7 @@ class ObstacleAvoiderROS(object):
                     linear=Vector3(linear_vel, 0, 0),
                     angular=Vector3(0, 0, angular_vel))
                 self.pub_vel.publish(twist_msg)
+                self.pub_mode.publish(Bool(True))
                 print('Residual')
             else:
                 linear_vel = prior_action[0] * 0.25
@@ -178,6 +236,7 @@ class ObstacleAvoiderROS(object):
                     linear=Vector3(linear_vel, 0, 0),
                     angular=Vector3(0, 0, angular_vel))
                 self.pub_vel.publish(twist_msg)
+                self.pub_mode.publish(Bool(False))
                 print('Prior')
         elif self.method == "prior":
             linear_vel = prior_action[0] * 0.25
