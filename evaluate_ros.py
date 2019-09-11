@@ -16,7 +16,7 @@ import tf2_ros
 
 MAP_FRAME = 'map'
 PATH = os.path.dirname(os.path.realpath(__file__))
-
+METHOD = "residual_switch" # Options: 1.) residual_switch 2.) residual_no_switch 3.) policy 4.) prior 
 GOAL_COMPLETE_THRESHOLD = 0.2
 SUB_GOAL_FREQUENCY = 5
 
@@ -81,8 +81,8 @@ class ObstacleAvoiderROS(object):
             queue_size=1)
 
         self.pub_mode = rospy.Publisher('/using_residual', Bool, queue_size=1)
-        self.method = "residual"
-        if self.method == "residual":
+        self.method = METHOD
+        if self.method == "residual_switch" or "residual_no_switch":
             self.actor = ActorNetwork_residual(21, 2)
         else:
             self.actor = ActorNetwork_policy(19, 2)
@@ -92,7 +92,7 @@ class ObstacleAvoiderROS(object):
         self.goal_loc = (self.goal_list.pop(0) if self.goal_list else None)
 
     def load_weights(self):
-        if self.method == "residual":
+        if self.method == "residual_switch" or "residual_no_switch":
 
             model_name = "1567642880.05_PointGoalNavigation_residual_EnvType_4_sparse_Dropout_vhf_ROBOT_FINAL"
             self.actor.load_state_dict(
@@ -219,7 +219,7 @@ class ObstacleAvoiderROS(object):
             return
 
         # Send actions to the robot
-        if self.method == "residual":
+        if self.method == "residual_switch":
             if eps > var[0] or eps > var[1]:
                 linear_vel = hybrid_action[0] * 0.25
                 angular_vel = hybrid_action[1] * 0.25
@@ -238,6 +238,13 @@ class ObstacleAvoiderROS(object):
                 self.pub_vel.publish(twist_msg)
                 self.pub_mode.publish(Bool(False))
                 print('Prior')
+        elif self.method == "residual_no_switch":
+                linear_vel = hybrid_action[0] * 0.25
+                angular_vel = hybrid_action[1] * 0.25
+                twist_msg = Twist(
+                    linear=Vector3(linear_vel, 0, 0),
+                    angular=Vector3(0, 0, angular_vel))
+                self.pub_vel.publish(twist_msg)
         elif self.method == "prior":
             linear_vel = prior_action[0] * 0.25
             angular_vel = prior_action[1] * 0.25
