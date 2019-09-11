@@ -93,8 +93,9 @@ class ObstacleAvoiderROS(object):
 
     def load_weights(self):
         if self.method == "residual_switch" or "residual_no_switch":
-
-            model_name = "1567642880.05_PointGoalNavigation_residual_EnvType_4_sparse_Dropout_vhf_ROBOT_FINAL"
+            model_name = "new_1"
+            #model_name = "new_2"
+            #model_name = "1567642880.05_PointGoalNavigation_residual_EnvType_4_sparse_Dropout_vhf_ROBOT_FINAL"
             self.actor.load_state_dict(
                 torch.load(PATH + '/residual_policy_weights/' + model_name +
                            'pi.pth'))
