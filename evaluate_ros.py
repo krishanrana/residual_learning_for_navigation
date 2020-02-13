@@ -16,7 +16,7 @@ import tf2_ros
 
 MAP_FRAME = 'map'
 PATH = os.path.dirname(os.path.realpath(__file__))
-METHOD = "residual_switch"  # Options: 1.) residual_switch 2.) residual_no_switch 3.) policy 4.) prior
+METHOD = "prior"  # Options: 1.) residual_switch 2.) residual_no_switch 3.) policy 4.) prior
 GOAL_COMPLETE_THRESHOLD = 0.2
 SUB_GOAL_FREQUENCY = 2.5
 
@@ -93,15 +93,16 @@ class ObstacleAvoiderROS(object):
 
     def load_weights(self):
 
-        if self.method == "residual_switch" or "residual_no_switch":
-            model_name = "new_1"
+        if self.method == "residual_switch" or self.method == "residual_no_switch":
+            #model_name = "new_1"
             #model_name = "new_2"
-            #model_name = "1567642880.05_PointGoalNavigation_residual_EnvType_4_sparse_Dropout_vhf_ROBOT_FINAL"
+            model_name = "1567642880.05_PointGoalNavigation_residual_EnvType_4_sparse_Dropout_vhf_ROBOT_FINALpi"
 
             self.actor.load_state_dict(
                 torch.load(PATH + '/residual_policy_weights/' + model_name +
-                           'pi.pth'))
+                           '.pth'))
         else:
+
             #model_name = "1567656455.73_PointGoalNavigation_policy_EnvType_4_dense_Dropout_vhf_ROBOT_FINAL"
             model_name = "1567741358.18_PointGoalNavigation_policy_EnvType_5_sparse_Dropout_vhf_ROBOT_FINAL"
             self.actor.load_state_dict(
