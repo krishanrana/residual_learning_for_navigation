@@ -61,7 +61,7 @@ class PotentialFieldsController():
         hit = np.flip((laser_scan < 1.5))
         struct = scipy.ndimage.generate_binary_structure(1, 1)
         hit = scipy.ndimage.binary_dilation(
-            hit, structure=struct, iterations=30).astype(hit.dtype)  #30
+            hit, structure=struct, iterations=35).astype(hit.dtype)  #30
         #hit = 1 - laser_scan*2
         repulsive_field = np.zeros([(self.fov + 1)])
         repulsive_field[int(self.fov / 4):int(3 * self.fov /
@@ -72,8 +72,8 @@ class PotentialFieldsController():
 
     def computeResultant(self, angle_to_goal, laser_scan):
 
-        Kw = 3  # 2
-        Kv = 0.1  # 0.1
+        Kw = 2  # 2
+        Kv = 0.2  # 0.1
         att = self.attractiveField(angle_to_goal)
         rep = self.repulsiveField(laser_scan)
 
