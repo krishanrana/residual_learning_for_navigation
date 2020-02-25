@@ -20,25 +20,31 @@ from torch.distributions import Normal
 import math
 import matplotlib.pyplot as plt
 
-
 MAP_FRAME = 'map'
 PATH = os.path.dirname(os.path.realpath(__file__))
-METHOD = "prior"  # Options: 1.) residual_switch 2.) residual_no_switch 3.) policy 4.) prior
+METHOD = "hybrid"  # Options: 1.) hybrid  2.) policy 3.) prior
 GOAL_COMPLETE_THRESHOLD = 0.2
 SUB_GOAL_FREQUENCY = 2.5
 num_agents = 5
-VIS_GRAPH = False
+VIS_GRAPH = True
+std_prior = 0.3
+
+ray.init()
+device = torch.device("cpu")
+
 
 def _dist(p1, p2):
     return ((p2[0] - p1[0])**2 + (p2[1] - p2[1])**2)**0.5
 
+
 # SAC Policy Model
+
 
 def mlp(sizes, activation, output_activation=nn.Identity):
     layers = []
-    for j in range(len(sizes)-1):
-        act = activation if j < len(sizes)-2 else output_activation
-        layers += [nn.Linear(sizes[j], sizes[j+1]), act()]
+    for j in range(len(sizes) - 1):
+        act = activation if j < len(sizes) - 2 else output_activation
+        layers += [nn.Linear(sizes[j], sizes[j + 1]), act()]
     return nn.Sequential(*layers)
 
 
@@ -68,12 +74,14 @@ class SquashedGaussianMLPActor(nn.Module):
 
         if with_logprob:
             # Compute logprob from Gaussian, and then apply correction for Tanh squashing.
-            # NOTE: The correction formula is a little bit magic. To get an understanding 
-            # of where it comes from, check out the original SAC paper (arXiv 1801.01290) 
+            # NOTE: The correction formula is a little bit magic. To get an understanding
+            # of where it comes from, check out the original SAC paper (arXiv 1801.01290)
             # and look in appendix C. This is a more numerically-stable equivalent to Eq 21.
             # Try deriving it yourself as a (very difficult) exercise. :)
             logp_pi = pi_distribution.log_prob(pi_action).sum(axis=-1)
-            logp_pi -= (2*(np.log(2) - pi_action - F.softplus(-2*pi_action))).sum(axis=1)
+            logp_pi -= (
+                2 * (np.log(2) - pi_action - F.softplus(-2 * pi_action))
+            ).sum(axis=1)
         else:
             logp_pi = None
 
@@ -88,34 +96,44 @@ def fuse_controllers(prior_mu, prior_sigma, policy_mu, policy_sigma):
     # The sigma from prior is fixed
     w1 = 1
     w2 = 1
-    mu = (np.power(policy_sigma, 2) * w1 * prior_mu + np.power(prior_sigma,2) * w2 * policy_mu)/(np.power(policy_sigma,2) * w1 + np.power(prior_sigma,2) * w2)
-    sigma = np.sqrt((np.power(prior_sigma,2) * np.power(policy_sigma,2))/(np.power(policy_sigma,2) * w1 + np.power(prior_sigma,2) * w2))
+    mu = (np.power(policy_sigma, 2) * w1 * prior_mu +
+          np.power(prior_sigma, 2) * w2 * policy_mu) / (
+              np.power(policy_sigma, 2) * w1 + np.power(prior_sigma, 2) * w2)
+    sigma = np.sqrt(
+        (np.power(prior_sigma, 2) * np.power(policy_sigma, 2)) /
+        (np.power(policy_sigma, 2) * w1 + np.power(prior_sigma, 2) * w2))
     return mu, sigma
 
 
 def fuse_ensembles_deterministic(ensemble_actions):
     # Takes in the ensemble actions and computes the mean and variance of the data
     global num_agents
-    actions = torch.tensor([ensemble_actions[i][0] for i in range (num_agents)])
-    mu = torch.mean(actions, dim=0)
-    var = torch.var(actions, dim=0)
+    actions = torch.tensor([ensemble_actions[i][0] for i in range(num_agents)])
+    mu = torch.mean(actions, dim=0).numpy()
+    var = torch.var(actions, dim=0).numpy()
     sigma = np.sqrt(var)
     return mu, sigma
+
 
 @ray.remote
 def get_action(state, policy):
     # This function can be run across multiple processes
     state = torch.FloatTensor(state).unsqueeze(0).to(device)
     a, _, mu, std = policy(state, False, False)
-    return [mu.detach().squeeze(0).cpu().numpy(), std.detach().squeeze(0).cpu().numpy()]
+    return [
+        mu.detach().squeeze(0).cpu().numpy(),
+        std.detach().squeeze(0).cpu().numpy()
+    ]
+
 
 def get_action_simple(state, policy):
     # Use this function when evaluating the policy alone
     state = torch.FloatTensor(state).unsqueeze(0).to(device)
     a, _, mu, std = policy(state, False, False)
-    return [mu.detach().squeeze(0).cpu().numpy(), std.detach().squeeze(0).cpu().numpy()]
-
-
+    return [
+        mu.detach().squeeze(0).cpu().numpy(),
+        std.detach().squeeze(0).cpu().numpy()
+    ]
 
 
 class ObstacleAvoiderROS(object):
@@ -150,20 +168,25 @@ class ObstacleAvoiderROS(object):
         ensemble_file_name = "trained_ensemble_for_robot_new_5/1582454594.5134897_PointGoalNavigation_sparse_SAC_spinup_long_horizon_hybridFOR_ROBOT10_"
 
         # Load in the network weights
-        self.policy_net_ensemble = [torch.load(ensemble_file_name + str(i) + "_.pth").cpu() for i in range(num_agents)]
+        self.policy_net_ensemble = [
+            torch.load(
+                ensemble_file_name + str(i) + "_.pth",
+                map_location=torch.device('cpu')).cpu()
+            for i in range(num_agents)
+        ]
 
-        self.policy_net = self.policy_net_ensemble[0]
+        self.policy_net = self.policy_net_ensemble[3]
 
         if VIS_GRAPH:
             self.fig = plt.gcf()
-            self.fig.show()
+            #self.fig.show()
             self.fig.canvas.draw()
-            plt.axis([-10,10,0,2])
+            plt.axis([-3, 3, 0, 2])
 
+        self.actions_prev = np.array([0, 0])
 
     def get_next_goal(self):
         self.goal_loc = (self.goal_list.pop(0) if self.goal_list else None)
-
 
     def process_data(self, t, data):
         # Convert the quaternion to euler angles
@@ -184,7 +207,7 @@ class ObstacleAvoiderROS(object):
             np.sin(angle_to_goal), np.cos(angle_to_goal))
         #print(np.rad2deg(angle_to_goal))
         dist_to_goal = np.linalg.norm(to_goal)
-        print('Distance to Goal: ', dist_to_goal)
+        #print('Distance to Goal: ', dist_to_goal)
         # Remove the last element of laser scan array to clip it to 180 samples
         laser_scan = np.array(data.ranges[:180])
         # Deal with the spurious data
@@ -235,6 +258,7 @@ class ObstacleAvoiderROS(object):
         self.get_next_goal()
 
     def cb_laser(self, data):
+        global std_prior
         # Bail if we don't have a current goal
         if self.goal_loc is None:
             print("No goal, exiting early")
@@ -249,6 +273,8 @@ class ObstacleAvoiderROS(object):
             rospy.logerr(e)
             return
 
+        _, _, dist_to_goal = self.process_data(t, data)
+
         # Decide whether we should bail on performing any actions
         if dist_to_goal < GOAL_COMPLETE_THRESHOLD:
             self.get_next_goal()
@@ -256,14 +282,17 @@ class ObstacleAvoiderROS(object):
             print("No goal, exiting early")
             return
 
-        if self.method == "hybrid":
-            laser_scan, angle_to_goal, dist_to_goal = self.process_data(t, data)
-            mu_prior = self.prior.computeResultant(angle_to_goal, laser_scan)
+        laser_scan, angle_to_goal, dist_to_goal = self.process_data(t, data)
+        obs = self.process_observation(angle_to_goal, dist_to_goal, laser_scan)
 
-            obs = self.process_observation(angle_to_goal, dist_to_goal, laser_scan)
-            ensemble_actions = ray.get([get_action.remote(obs, p) for p in self.policy_net_ensemble])
-            mu_ensemble, std_ensemble = fuse_ensembles_deterministic(ensemble_actions)
-            mu_hybrid, std_hybrid = fuse_controllers(mu_prior, std_prior, mu_ensemble, std_ensemble)
+        if self.method == "hybrid":
+            mu_prior = self.prior.computeResultant(angle_to_goal, laser_scan)
+            ensemble_actions = ray.get(
+                [get_action.remote(obs, p) for p in self.policy_net_ensemble])
+            mu_ensemble, std_ensemble = fuse_ensembles_deterministic(
+                ensemble_actions)
+            mu_hybrid, std_hybrid = fuse_controllers(mu_prior, std_prior,
+                                                     mu_ensemble, std_ensemble)
 
             vmu_policy = mu_ensemble[0]
             vsigma_policy = std_ensemble[0]
@@ -275,45 +304,55 @@ class ObstacleAvoiderROS(object):
             wsigma_policy = std_ensemble[1]
 
             wmu_prior = mu_prior[1]
-            wsigma_prior = std_prior  
+            wsigma_prior = std_prior
 
             vmu_combined = mu_hybrid[0]
             vsigma_combined = std_hybrid[0]
             wmu_combined = mu_hybrid[1]
             wsigma_combined = std_hybrid[1]
 
-            if VIS_GRAPH:
-                    x = np.linspace(-3, 3, 100)
-                    plt.subplot(211)
-                    plt.plot(x, stats.norm.pdf(x, vmu_policy, vsigma_policy))
-                    plt.plot(x, stats.norm.pdf(x, vmu_prior, vsigma_prior))
-                    plt.plot(x, stats.norm.pdf(x, vmu_combined, vsigma_combined))
-                    plt.legend(['Policy', 'Prior', 'Combined'], loc="upper right")
-                    plt.xlabel('Linear Velocity')
-                    plt.subplot(212)
-                    plt.plot(x, stats.norm.pdf(x, wmu_policy, wsigma_policy))
-                    plt.plot(x, stats.norm.pdf(x, wmu_prior, wsigma_prior))
-                    plt.plot(x, stats.norm.pdf(x, wmu_combined, wsigma_combined))
-                    plt.xlabel('Angular Velocity')
-                    self.fig.canvas.draw()
-                    self.fig.clf()
+            print('Prior Mu: ', vmu_prior)
+            #print('Prior Std: ', vsigma_prior)
+            #print('Policy Mu: ', vmu_policy)
+            #print('Policy Std: ', vsigma_policy)
 
-            dist_combined  = Normal(torch.tensor(mu_hybrid), torch.tensor(std_hybrid))
-            act = dist_combined.rsample()
+            if VIS_GRAPH:
+                self.fig.clf()
+                x = np.linspace(-3, 3, 100)
+                plt.subplot(211)
+                plt.plot(x, stats.norm.pdf(x, vmu_policy, vsigma_policy))
+                plt.plot(x, stats.norm.pdf(x, vmu_prior, vsigma_prior))
+                plt.plot(x, stats.norm.pdf(x, vmu_combined, vsigma_combined))
+                plt.legend(['Policy', 'Prior', 'Combined'], loc="upper right")
+                plt.xlabel('Linear Velocity')
+                plt.subplot(212)
+                plt.plot(x, stats.norm.pdf(x, wmu_policy, wsigma_policy))
+                plt.plot(x, stats.norm.pdf(x, wmu_prior, wsigma_prior))
+                plt.plot(x, stats.norm.pdf(x, wmu_combined, wsigma_combined))
+                plt.xlabel('Angular Velocity')
+                plt.xlim([-3, 3])
+
+            dist_combined = Normal(
+                torch.FloatTensor(mu_hybrid), torch.FloatTensor(std_hybrid))
+            #act = dist_combined.rsample()
+            act = torch.FloatTensor(mu_hybrid)
+
             act = torch.tanh(act).numpy()
 
             linear_vel = act[0] * 0.25
             angular_vel = act[1] * 0.25
             twist_msg = Twist(
-            linear=Vector3(linear_vel, 0, 0),
-            angular=Vector3(0, 0, angular_vel))
+                linear=Vector3(linear_vel, 0, 0),
+                angular=Vector3(0, 0, angular_vel))
             self.pub_vel.publish(twist_msg)
             self.pub_mode.publish(Bool(True))
-            
+
         elif self.method == "policy":
-            action_dist = get_action_simple(state, policy_net)
-            dist_policy = Normal(torch.tensor(action_dist[0]), torch.tensor(action_dist[1]))
-            act = dist_policy.sample()
+            action_dist = get_action_simple(obs, self.policy_net)
+            dist_policy = Normal(
+                torch.tensor(action_dist[0]), torch.tensor(action_dist[1]))
+            #act = dist_policy.sample()
+            act = torch.Tensor(action_dist[0])
             policy_action = torch.tanh(act).numpy()
             linear_vel = policy_action[0] * 0.25
             angular_vel = policy_action[1] * 0.25
@@ -323,8 +362,8 @@ class ObstacleAvoiderROS(object):
             self.pub_vel.publish(twist_msg)
 
         elif self.method == "prior":
-            laser_scan, angle_to_goal, dist_to_goal = self.process_data(t, data)
-            prior_action = self.prior.computeResultant(angle_to_goal, laser_scan)
+            prior_action = self.prior.computeResultant(angle_to_goal,
+                                                       laser_scan)
             linear_vel = prior_action[0] * 0.25
             angular_vel = prior_action[1] * 0.25
             twist_msg = Twist(
@@ -332,15 +371,17 @@ class ObstacleAvoiderROS(object):
                 angular=Vector3(0, 0, angular_vel))
             self.pub_vel.publish(twist_msg)
 
-        print('Linear Vel: ', linear_vel)
-        print('Angular Vel: ', angular_vel)
+        #print('Linear Vel: ', linear_vel)
+        #print('Angular Vel: ', angular_vel)
+
+        self.actions_prev = np.array([linear_vel, angular_vel])
 
 
 if __name__ == "__main__":
     rospy.init_node('env_ros')
     oar = ObstacleAvoiderROS()
-    rospy.spin()
+    #rospy.spin()
 
-    # while not rospy.is_shutdown():
-    #     plt.show(block=False)
-    #     plt.pause(0.001)
+    while not rospy.is_shutdown():
+        plt.show(block=False)
+        plt.pause(0.001)

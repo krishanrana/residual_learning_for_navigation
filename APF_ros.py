@@ -5,7 +5,7 @@ import numpy as np
 import cv2
 import random
 import time
-from matplotlib import pyplot as plt
+#from matplotlib import pyplot as plt
 import scipy.ndimage
 from collections import deque
 
@@ -17,8 +17,8 @@ class PotentialFieldsController():
 
     def __init__(self):
         self.fov = 360
-        self.fig, (self.ax1, self.ax2, self.ax3) = plt.subplots(
-            3, 1, sharex=True)
+        #self.fig, (self.ax1, self.ax2, self.ax3) = plt.subplots(
+        #    3, 1, sharex=True)
         self.buffer = deque(maxlen=2)
         self.buffer.append(0)
         self.buffer.append(0)
