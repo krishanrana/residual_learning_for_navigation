@@ -286,7 +286,16 @@ class ObstacleAvoiderROS(object):
         obs = self.process_observation(angle_to_goal, dist_to_goal, laser_scan)
 
         if self.method == "hybrid":
+            # Get action from prior
             mu_prior = self.prior.computeResultant(angle_to_goal, laser_scan)
+
+            # Compute state dependent standard deviation
+            laser_scans = [laser_scan + np.random.normal(0,0.1,180) for _ in range(100)]
+            prior_actions = [self.prior.computeResultant(dist_to_goal, angle_to_goal, ls) for ls in laser_scans]
+            prior_std_est =  np.std(prior_actions, 0)
+            print('Prior Std Estimate ', prior_std_est)
+
+            # Get action distribution from policy ensemble
             ensemble_actions = ray.get(
                 [get_action.remote(obs, p) for p in self.policy_net_ensemble])
             mu_ensemble, std_ensemble = fuse_ensembles_deterministic(
@@ -311,7 +320,7 @@ class ObstacleAvoiderROS(object):
             wmu_combined = mu_hybrid[1]
             wsigma_combined = std_hybrid[1]
 
-            print('Prior Mu: ', vmu_prior)
+            #print('Prior Mu: ', vmu_prior)
             #print('Prior Std: ', vsigma_prior)
             #print('Policy Mu: ', vmu_policy)
             #print('Policy Std: ', vsigma_policy)
