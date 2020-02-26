@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 
 MAP_FRAME = 'map'
 PATH = os.path.dirname(os.path.realpath(__file__))
-METHOD = "hybrid"  # Options: 1.) hybrid  2.) policy 3.) prior
+METHOD = "policy"  # Options: 1.) hybrid  2.) policy 3.) prior
 GOAL_COMPLETE_THRESHOLD = 0.2
 SUB_GOAL_FREQUENCY = 2.5
 num_agents = 5
@@ -175,7 +175,7 @@ class ObstacleAvoiderROS(object):
             for i in range(num_agents)
         ]
 
-        self.policy_net = self.policy_net_ensemble[3]
+        self.policy_net = self.policy_net_ensemble[2]
 
         if VIS_GRAPH:
             self.fig = plt.gcf()
