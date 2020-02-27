@@ -16,7 +16,7 @@ import tf2_ros
 
 MAP_FRAME = 'map'
 PATH = os.path.dirname(os.path.realpath(__file__))
-METHOD = "prior"  # Options: 1.) residual_switch 2.) residual_no_switch 3.) policy 4.) prior
+METHOD = "residual_switch"  # Options: 1.) residual_switch 2.) residual_no_switch 3.) policy 4.) prior
 GOAL_COMPLETE_THRESHOLD = 0.2
 SUB_GOAL_FREQUENCY = 2.5
 

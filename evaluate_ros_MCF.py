@@ -6,7 +6,7 @@ import os
 import copy
 from APF_ros import *
 import rospy
-from std_msgs.msg import Bool, String, Int32, Int32MultiArray, MultiArrayLayout, MultiArrayDimension
+from std_msgs.msg import Bool, Float64, String, Int32, Int32MultiArray, MultiArrayLayout, MultiArrayDimension
 from geometry_msgs.msg import Twist, Vector3
 from nav_msgs.msg import Path
 from sensor_msgs.msg import LaserScan
@@ -162,8 +162,16 @@ class ObstacleAvoiderROS(object):
             self.cb_global_plan,
             queue_size=1)
 
-        self.pub_mode = rospy.Publisher('/using_residual', Bool, queue_size=1)
         self.method = METHOD
+
+        self.pub_std_dev_policy_lin = rospy.Publisher(
+            '/std_dev_policy_lin', Float64, queue_size=1)
+        self.pub_std_dev_policy_ang = rospy.Publisher(
+            '/std_dev_policy_ang', Float64, queue_size=1)
+        self.pub_std_dev_hybrid_lin = rospy.Publisher(
+            '/std_dev_hybrid_lin', Float64, queue_size=1)
+        self.pub_std_dev_hybrid_ang = rospy.Publisher(
+            '/std_dev_hybrid_ang', Float64, queue_size=1)
 
         ensemble_file_name = "trained_ensemble_for_robot_new_5/1582454594.5134897_PointGoalNavigation_sparse_SAC_spinup_long_horizon_hybridFOR_ROBOT10_"
 
@@ -290,16 +298,30 @@ class ObstacleAvoiderROS(object):
             mu_prior = self.prior.computeResultant(angle_to_goal, laser_scan)
 
             # Compute state dependent standard deviation
-            laser_scans = [laser_scan + np.random.normal(0,0.1,180) for _ in range(100)]
-            prior_actions = [self.prior.computeResultant(dist_to_goal, angle_to_goal, ls) for ls in laser_scans]
-            prior_std_est =  np.std(prior_actions, 0)
-            print('Prior Std Estimate ', prior_std_est)
+            laser_scans = [
+                laser_scan + np.random.normal(0, 0.015, 180)
+                for _ in range(100)
+            ]
+            prior_actions = [
+                self.prior.computeResultant(angle_to_goal, ls)
+                for ls in laser_scans
+            ]
+            std_prior_est = np.std(prior_actions, 0)
+            #print('Prior Std Estimate ', std_prior_est)
+
+            #std_prior_temp = [0, 0]
+            #std_prior_temp[0] = max(std_prior, std_prior_est[0])
+            #std_prior_temp[1] = max(std_prior, std_prior_est[1])
+
+            #print('Prior Std temp: ', std_prior_temp)
 
             # Get action distribution from policy ensemble
             ensemble_actions = ray.get(
                 [get_action.remote(obs, p) for p in self.policy_net_ensemble])
             mu_ensemble, std_ensemble = fuse_ensembles_deterministic(
                 ensemble_actions)
+            #print('Ensemble std: ', std_ensemble)
+            #print(ensemble_actions)
             mu_hybrid, std_hybrid = fuse_controllers(mu_prior, std_prior,
                                                      mu_ensemble, std_ensemble)
 
@@ -348,13 +370,19 @@ class ObstacleAvoiderROS(object):
 
             act = torch.tanh(act).numpy()
 
-            linear_vel = act[0] * 0.25
-            angular_vel = act[1] * 0.25
+            linear_vel = act[0] * 0.35
+            angular_vel = act[1] * 0.35
             twist_msg = Twist(
                 linear=Vector3(linear_vel, 0, 0),
                 angular=Vector3(0, 0, angular_vel))
             self.pub_vel.publish(twist_msg)
-            self.pub_mode.publish(Bool(True))
+            #self.pub_mode.publish(Bool(True))
+
+            # Publish std_hybrid
+            self.pub_std_dev_policy_lin.publish(Float64(std_ensemble[0]))
+            self.pub_std_dev_policy_ang.publish(Float64(std_ensemble[1]))
+            self.pub_std_dev_hybrid_lin.publish(Float64(std_hybrid[0]))
+            self.pub_std_dev_hybrid_ang.publish(Float64(std_hybrid[1]))
 
         elif self.method == "policy":
             action_dist = get_action_simple(obs, self.policy_net)
@@ -380,8 +408,8 @@ class ObstacleAvoiderROS(object):
                 angular=Vector3(0, 0, angular_vel))
             self.pub_vel.publish(twist_msg)
 
-        #print('Linear Vel: ', linear_vel)
-        #print('Angular Vel: ', angular_vel)
+        print('Linear Vel: ', linear_vel)
+        print('Angular Vel: ', angular_vel)
 
         self.actions_prev = np.array([linear_vel, angular_vel])
 
